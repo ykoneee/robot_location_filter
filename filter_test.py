@@ -1,6 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from filterpy.monte_carlo  import systematic_resample
+from filterpy.kalman import UnscentedKalmanFilter
+from filterpy.common import Q_discrete_white_noise
+from filterpy.kalman import MerweScaledSigmaPoints
 import scipy.stats
 class fake_robot():
     def __init__(self,std=0.1):
@@ -30,7 +33,7 @@ class fake_robot():
                 self.rotate_acc=0
                 #self.angle+=np.random.rand()*270-135
             elif self.state==1:
-                self.v=0.5+np.random.uniform(0,1)
+                self.v=0.6+np.random.uniform(0,1)
                 if np.random.rand()<0.5:
                     self.rotate_acc=np.random.uniform(20,35)
                 else:
@@ -53,10 +56,11 @@ class sliding_window_filter():
         return np.mean(self.datalist,axis=0)
 class pf():
     def __init__(self,init_point,std):
-        self.N=1000
+        self.N=500
         #self.particles=self.normal_particles(init_point,std,self.N)
-        self.particles=self.uniform_particles([-4,4],[-4,4],[1,2],self.N)
+        self.particles=self.uniform_particles([-2,2],[-2,2],[1,2],self.N)
         self.weights = np.zeros(self.N)
+        self.resample_time=0
     def uniform_particles(self,x_range, y_range, v_range, N):
         particles = np.empty((N, 3))
         particles[:, 0] = np.random.uniform(x_range[0], x_range[1], size=N)
@@ -102,10 +106,14 @@ class pf():
     def resample(self):
         if self.neff() < self.N/2:
             #print('resample!')
+            self.resample_time+=1
             indexes = systematic_resample(self.weights)
-            self.resample_from_index(indexes)        
-robot=fake_robot(std=.11)
-origin_data=np.array([robot.sample() for _ in range(2000)])
+            self.resample_from_index(indexes)     
+class ekf():
+    def __init__(self):
+        pass
+robot=fake_robot(std=.2)
+origin_data=np.array([robot.sample() for _ in range(1000)])
 move_v_angle=origin_data[:,:2]
 move_no_noise=origin_data[:,2:5]
 move_with_noise=origin_data[:,5:]
@@ -151,9 +159,11 @@ def pftest(a='121'):
     move_with_filter=[]
     move_with_filter.append(np.array(init_point[:2]))
     for i in range(1,len(move_with_noise)):
-        if i%500==0:print(i)
+        if i%500==0:
+            print(i)
+        #print(f.resample_time)
         
-        f.predict(move_v_angle[i],[0.045,0.2], dt=0.05)
+        f.predict(move_v_angle[i],[0.06,0.15], dt=0.05)
         f.update(move_with_noise[i][:2],0.1)
         f.resample()
         mean0,std0=f.estimate()
@@ -164,9 +174,11 @@ def pftest(a='121'):
         #plt.scatter(mean0[0],mean0[1],s=3,c='k')
         
     move_with_filter=np.array(move_with_filter)
-    plt.scatter(move_with_filter[:,0],move_with_filter[:,1],label='with_filter',s=40,c='g')
-    plt.scatter(move_no_noise[:,0],move_no_noise[:,1],label='origin',s=30,c='r')
-    plt.scatter(move_with_noise[:,0],move_with_noise[:,1],label='with_noise',s=10,alpha=0.5)
+    #plt.scatter(move_with_filter[:,0],move_with_filter[:,1],label='with_filter',s=15,c='g')
+    
+    plt.scatter(move_no_noise[:,0],move_no_noise[:,1],label='origin',s=9,c='r')
+    plt.scatter(move_with_noise[:,0],move_with_noise[:,1],label='with_noise',s=10,alpha=0.1)
+    plt.plot(move_with_filter[:,0],move_with_filter[:,1],label='with_filter')
     #plt.legend()
     plt.grid(True)
     ax=plt.gca()
@@ -181,44 +193,46 @@ def pftest(a='121'):
     #ax.spines['left'].set_position(('data',0))
     #plt.show()    
     calculate_filter_error('pf','122')
-
-def pftest2():
-    n=15
-    plt.figure(1)
-    init_point=move_no_noise[0]
-    f=pf(init_point,[0.01,0.01,10000])
-    move_with_filter=[]
-    move_with_filter.append(np.array(move_with_noise[0,:2]))
-    for i in range(1,n):
-        print(i)
-        f.predict([1.5,0],[0.05,10000], dt=0.05)
-        f.update(move_with_noise[i][:2],0.1)
-        f.resample()
-        mean0,std0=f.estimate()
-        move_with_filter.append(mean0)
-        #plt.scatter(old[:,0],old[:,1],s=3,label='old')
-        plt.scatter(f.particles[:,0],f.particles[:,1],s=2,alpha=0.2,label=f'particles:{i}')
-        #plt.scatter(mean0[0],mean0[1],s=30,c='k')
-        plt.scatter(move_no_noise[i,0],move_no_noise[i,1],s=30,c='r')
-    move_with_filter=np.array(move_with_filter)
-    plt.plot(move_with_filter[:,0],move_with_filter[:,1])
-    plt.plot(move_with_noise[:n,0],move_with_noise[:n,1])
-    #plt.legend()
-    plt.grid(True)
-    ax=plt.gca()
-    ax.set_aspect(1)
-    #fig=plt.gcf()
-    #fig.set_size_inches(8,8,forward=True)
-    ax.spines['right'].set_color('none')
-    ax.spines['top'].set_color('none')
-    ax.xaxis.set_ticks_position('bottom')
-    ax.spines['bottom'].set_position(('data',0))
-    ax.yaxis.set_ticks_position('left')
-    ax.spines['left'].set_position(('data',0))
-    #plt.show()       
+def ukftest():
+    global move_with_filter
+    def f_cv(x, dt):
+        """ state transition function for a 
+        constant velocity aircraft"""
+        
+        F = np.array([[1, dt, 0,  0],
+                      [0,  1, 0,  0],
+                      [0,  0, 1, dt],
+                      [0,  0, 0,  1]])
+        return np.dot(F, x)
+    
+    def h_cv(x):
+        return x[[0, 2]]    
+    sigmas = MerweScaledSigmaPoints(4, alpha=.1, beta=2., kappa=1.)
+    ukf = UnscentedKalmanFilter(dim_x=4, dim_z=2, fx=f_cv,
+              hx=h_cv, dt=0.05, points=sigmas)
+    ukf.x = np.array([0., 0., 0., 0.])
+    ukf.R = np.diag([0.01, 0.01]) 
+    ukf.Q[0:2, 0:2] = Q_discrete_white_noise(2, dt=0.05, var=0.02)
+    ukf.Q[2:4, 2:4] = Q_discrete_white_noise(2, dt=0.05, var=0.02)  
+    print(ukf.Q)
+    uxs = []
+    #zs = [np.array([i + np.random.randn()*0.3, 
+                    #i + np.random.randn()*0.3]) for i in range(100)]      
+    for i in range(len(move_with_noise)):
+        if i%500==0:
+            print(i)
+        ukf.predict()
+        ukf.update(move_with_noise[i][:2])
+        uxs.append(ukf.x.copy())
+    uxs = np.array(uxs)
+    move_with_filter=np.array([uxs[:, 0], uxs[:, 2]]).T
+    plt.subplot('121')
+    #plt.scatter(move_with_noise[:,0],move_with_noise[:,1],s=10)
+    plt.scatter(move_no_noise[:,0],move_no_noise[:,1],s=10,c='r')
+    plt.plot(move_with_filter[:, 0], move_with_filter[:, 1])
+    calculate_filter_error('ukf','122')
 if __name__=='__main__':
-    #pftest2()
-    pftest('121')
+    ukftest()
+    #pftest('121')
     #swtest('121')
-    #plt.hist(1.5+np.random.randn(10000)*0.15,bins=50)
     plt.show()
