@@ -21,7 +21,7 @@ class fake_robot():
         
         #self.v=self.v+self.a*1/self.sampleHZ
         self.state_holdcount+=1
-        if self.state_holdcount>30:
+        if self.state_holdcount>40:
             self.state_holdcount=0
             if np.random.rand()<0.85:
                 tempnum1=np.random.randint(0,3)
@@ -112,8 +112,8 @@ class pf():
 class ekf():
     def __init__(self):
         pass
-robot=fake_robot(std=.2)
-origin_data=np.array([robot.sample() for _ in range(1000)])
+robot=fake_robot(std=.5)
+origin_data=np.array([robot.sample() for _ in range(7000)])
 move_v_angle=origin_data[:,:2]
 move_no_noise=origin_data[:,2:5]
 move_with_noise=origin_data[:,5:]
@@ -195,37 +195,31 @@ def pftest(a='121'):
     calculate_filter_error('pf','122')
 def ukftest():
     global move_with_filter
-    def f_cv(x, dt):
-        """ state transition function for a 
-        constant velocity aircraft"""
-        
-        F = np.array([[1, dt, 0,  0],
-                      [0,  1, 0,  0],
-                      [0,  0, 1, dt],
-                      [0,  0, 0,  1]])
-        return np.dot(F, x)
-    
+    def f_cv(x, dt,v_angle):
+        v=v_angle[0]
+        rad=v_angle[1]
+        dx=np.cos(rad)*v*dt
+        dy=np.sin(rad)*v*dt
+        x[0]+=dx
+        x[1]+=dy
+        return x
     def h_cv(x):
-        return x[[0, 2]]    
-    sigmas = MerweScaledSigmaPoints(4, alpha=.1, beta=2., kappa=1.)
-    ukf = UnscentedKalmanFilter(dim_x=4, dim_z=2, fx=f_cv,
+        return x    
+    sigmas = MerweScaledSigmaPoints(2, alpha=.1, beta=2., kappa=1.)
+    ukf = UnscentedKalmanFilter(dim_x=2, dim_z=2, fx=f_cv,
               hx=h_cv, dt=0.05, points=sigmas)
-    ukf.x = np.array([0., 0., 0., 0.])
-    ukf.R = np.diag([0.01, 0.01]) 
-    ukf.Q[0:2, 0:2] = Q_discrete_white_noise(2, dt=0.05, var=0.02)
-    ukf.Q[2:4, 2:4] = Q_discrete_white_noise(2, dt=0.05, var=0.02)  
-    print(ukf.Q)
-    uxs = []
-    #zs = [np.array([i + np.random.randn()*0.3, 
-                    #i + np.random.randn()*0.3]) for i in range(100)]      
+    ukf.x = np.array([0., 0.])
+    ukf.R *= 0.5
+    ukf.Q = Q_discrete_white_noise(2, dt=0.05, var=0.03)
+    uxs = []  
     for i in range(len(move_with_noise)):
         if i%500==0:
             print(i)
-        ukf.predict()
+        ukf.predict(v_angle=move_v_angle[i])
         ukf.update(move_with_noise[i][:2])
         uxs.append(ukf.x.copy())
     uxs = np.array(uxs)
-    move_with_filter=np.array([uxs[:, 0], uxs[:, 2]]).T
+    move_with_filter=np.array([uxs[:, 0], uxs[:, 1]]).T
     plt.subplot('121')
     #plt.scatter(move_with_noise[:,0],move_with_noise[:,1],s=10)
     plt.scatter(move_no_noise[:,0],move_no_noise[:,1],s=10,c='r')
