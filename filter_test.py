@@ -5,6 +5,8 @@ from filterpy.kalman import UnscentedKalmanFilter
 from filterpy.common import Q_discrete_white_noise
 from filterpy.kalman import MerweScaledSigmaPoints
 import scipy.stats
+import time
+from numpy.random import randn
 class fake_robot():
     def __init__(self,std=0.1):
         self.a=0
@@ -13,17 +15,15 @@ class fake_robot():
         self.x=0
         self.y=0
         self.state=0
-        self.state_holdcount=100
+        self.state_holdcount=0
         self.sampleHZ=20
         self.noise_std=std
-        self.rotate_acc=20
+        self.rotate_acc=0
     def sample(self):
-        
-        #self.v=self.v+self.a*1/self.sampleHZ
         self.state_holdcount+=1
-        if self.state_holdcount>40:
+        if self.state_holdcount>80:
             self.state_holdcount=0
-            if np.random.rand()<0.85:
+            if np.random.rand()<0.7:
                 tempnum1=np.random.randint(0,3)
                 while self.state==tempnum1:
                     tempnum1=np.random.randint(0,3)
@@ -35,15 +35,16 @@ class fake_robot():
             elif self.state==1:
                 self.v=0.6+np.random.uniform(0,1)
                 if np.random.rand()<0.5:
-                    self.rotate_acc=np.random.uniform(20,35)
+                    self.rotate_acc=np.deg2rad(np.random.uniform(4,12))
                 else:
-                    self.rotate_acc=-np.random.uniform(20,35)
+                    self.rotate_acc=np.deg2rad(-np.random.uniform(4,12))
                 #self.angle+=np.random.rand()*270-135
-        self.angle+=self.rotate_acc*(1/self.sampleHZ)+np.random.randn()
-        self.x+=self.v*(1/self.sampleHZ)*np.cos(np.deg2rad(self.angle))+np.random.randn()*0.004
-        self.y+=self.v*(1/self.sampleHZ)*np.sin(np.deg2rad(self.angle))+np.random.randn()*0.004       
-        #return self.x,self.y,np.random.uniform(0,2*np.pi),self.x+np.random.uniform(-0.5,0.5),self.y+np.random.uniform(-0.5,0.5),np.random.uniform(0,2*np.pi)
-        return self.v,np.deg2rad(self.angle),self.x,self.y,np.random.uniform(0,2*np.pi),self.x+np.random.randn()*self.noise_std,self.y+np.random.randn()*self.noise_std,np.random.uniform(0,2*np.pi)
+        self.angle+=self.rotate_acc*(1/self.sampleHZ)+np.random.randn()*.01
+        self.x+=self.v*(1/self.sampleHZ)*np.cos(self.angle)+np.random.randn()*0.001
+        self.y+=self.v*(1/self.sampleHZ)*np.sin(self.angle)+np.random.randn()*0.001       
+        return self.v,self.rotate_acc,\
+               self.x,self.y,self.angle,\
+               self.x+randn()*self.noise_std,self.y+randn()*self.noise_std,self.angle+randn()*0.01
 class sliding_window_filter():
     def __init__(self,window_size):
         self.datalist=[]
@@ -56,9 +57,9 @@ class sliding_window_filter():
         return np.mean(self.datalist,axis=0)
 class pf():
     def __init__(self,init_point,std):
-        self.N=500
-        #self.particles=self.normal_particles(init_point,std,self.N)
-        self.particles=self.uniform_particles([-2,2],[-2,2],[1,2],self.N)
+        self.N=1000
+        self.particles=self.normal_particles(init_point,std,self.N)
+        #self.particles=self.uniform_particles([-2,2],[-2,2],[1,2],self.N)
         self.weights = np.zeros(self.N)
         self.resample_time=0
     def uniform_particles(self,x_range, y_range, v_range, N):
@@ -75,10 +76,10 @@ class pf():
         particles[:, 2] = mean[2] + (np.random.randn(N) * std[2])
         particles[:, 2] %= 2 * np.pi
         return particles    
-    def predict(self, u, std, dt=1.,angle_increase_mode=False):
+    def predict(self, u, std, dt=1.,angle_increase_mode=True):
         
         if angle_increase_mode:
-            self.particles[:, 2] += u[1] + (np.random.randn(self.N) * std[1])
+            self.particles[:, 2] += u[1]*dt + (np.random.randn(self.N) * std[1])
         else:
             self.particles[:, 2] = u[1] + (np.random.randn(self.N) * std[1])
         self.particles[:, 2] %= 2 * np.pi          
@@ -112,12 +113,20 @@ class pf():
 class ekf():
     def __init__(self):
         pass
-robot=fake_robot(std=.5)
-origin_data=np.array([robot.sample() for _ in range(7000)])
+robot=fake_robot(std=.3)
+origin_data=np.array([robot.sample() for _ in range(5000)])
 move_v_angle=origin_data[:,:2]
 move_no_noise=origin_data[:,2:5]
 move_with_noise=origin_data[:,5:]
 move_with_filter=None
+def refrashdata():
+    global robot,origin_data,move_v_angle,move_no_noise,move_with_noise,move_with_filter
+    robot=fake_robot(std=.1)
+    origin_data=np.array([robot.sample() for _ in range(3000)])
+    move_v_angle=origin_data[:,:2]
+    move_no_noise=origin_data[:,2:5]
+    move_with_noise=origin_data[:,5:]
+    move_with_filter=None
 def calculate_filter_error(name,subname):
     a=move_no_noise[:,:2]
     b=move_with_filter
@@ -125,7 +134,7 @@ def calculate_filter_error(name,subname):
         b=b[:,:2]
     err=np.linalg.norm(a-b,axis=1)
     plt.subplot(subname)
-    plt.hist(err,bins=150)
+    plt.hist(err,bins=500)
     print(f'{name} err:avg:{err.mean():.3f} std:{err.std():.3f} max:{err.max():.3f} min:{err.min():.3f}')
 def swtest(subplotname='151'):
     global move_with_filter
@@ -155,15 +164,12 @@ def pftest(a='121'):
     global move_with_filter
     plt.subplot(a)
     init_point=move_with_noise[0]
-    f=pf(init_point,[.5,.5,10000])
+    f=pf(init_point,[.5,.5,10])
     move_with_filter=[]
     move_with_filter.append(np.array(init_point[:2]))
+    t1=time.time()
     for i in range(1,len(move_with_noise)):
-        if i%500==0:
-            print(i)
-        #print(f.resample_time)
-        
-        f.predict(move_v_angle[i],[0.06,0.15], dt=0.05)
+        f.predict(move_v_angle[i],[0.015,0.03], dt=0.05)
         f.update(move_with_noise[i][:2],0.1)
         f.resample()
         mean0,std0=f.estimate()
@@ -172,7 +178,9 @@ def pftest(a='121'):
         #plt.scatter(old[:,0],old[:,1],s=3,label='old')
         #plt.scatter(new[:,0],new[:,1],s=3,label='new')
         #plt.scatter(mean0[0],mean0[1],s=3,c='k')
-        
+        if i%500==0:
+            print(i,(time.time()-t1)/500)        
+            t1=time.time()
     move_with_filter=np.array(move_with_filter)
     #plt.scatter(move_with_filter[:,0],move_with_filter[:,1],label='with_filter',s=15,c='g')
     
@@ -198,6 +206,45 @@ def ukftest():
     def f_cv(x, dt,v_angle):
         v=v_angle[0]
         rad=v_angle[1]
+        x[2]+=rad*dt
+        x[2]%=2*np.pi    
+        dist = (v*dt)
+        x[0]+= np.cos(x[2]) * dist
+        x[1]+= np.sin(x[2]) * dist          
+        return x
+    def h_cv(x):
+        return x[:2]
+    sigmas = MerweScaledSigmaPoints(3, alpha=.01, beta=2., kappa=0.)
+    ukf = UnscentedKalmanFilter(dim_x=3, dim_z=2, fx=f_cv,
+              hx=h_cv, dt=0.05, points=sigmas)
+    ukf.x = np.array([0., 0.,0.])
+    ukf.R *= 0.2
+    ukf.Q*=1e-4
+    #ukf.Q = Q_discrete_white_noise(3, dt=0.05, var=0.0001)
+    uxs = []  
+    t1=time.time()
+    for i in range(len(move_with_noise)):
+        ukf.predict(v_angle=move_v_angle[i])
+        ukf.update(move_with_noise[i][:2])
+        uxs.append(ukf.x.copy())
+        if i%500==0:
+            print(i,(time.time()-t1)/500)
+            t1=time.time()        
+    uxs = np.array(uxs)
+    move_with_filter=np.array([uxs[:, 0], uxs[:, 1]]).T
+    plt.subplot('121')
+    plt.scatter(move_no_noise[:,0],move_no_noise[:,1],label='origin',s=9,c='r')
+    plt.scatter(move_with_noise[:,0],move_with_noise[:,1],label='with_noise',s=10,alpha=0.1)
+    plt.plot(move_with_filter[:,0],move_with_filter[:,1],label='with_filter')
+    plt.grid(True)
+    ax=plt.gca()
+    ax.set_aspect(1)    
+    calculate_filter_error('ukf','122')
+def ukf_aug_search(R=5,Q_var=0.1,alpha=0.05):
+    global move_with_filter
+    def f_cv(x, dt,v_angle):
+        v=v_angle[0]
+        rad=v_angle[1]
         dx=np.cos(rad)*v*dt
         dy=np.sin(rad)*v*dt
         x[0]+=dx
@@ -205,28 +252,43 @@ def ukftest():
         return x
     def h_cv(x):
         return x    
-    sigmas = MerweScaledSigmaPoints(2, alpha=.1, beta=2., kappa=1.)
+    sigmas = MerweScaledSigmaPoints(2, alpha=alpha, beta=2., kappa=1.)
     ukf = UnscentedKalmanFilter(dim_x=2, dim_z=2, fx=f_cv,
-              hx=h_cv, dt=0.05, points=sigmas)
+                                hx=h_cv, dt=0.05, points=sigmas)
     ukf.x = np.array([0., 0.])
-    ukf.R *= 0.5
-    ukf.Q = Q_discrete_white_noise(2, dt=0.05, var=0.03)
+    ukf.R *= R
+    ukf.Q = Q_discrete_white_noise(2, dt=0.05, var=Q_var)
     uxs = []  
+    t1=time.time()
     for i in range(len(move_with_noise)):
-        if i%500==0:
-            print(i)
         ukf.predict(v_angle=move_v_angle[i])
         ukf.update(move_with_noise[i][:2])
         uxs.append(ukf.x.copy())
-    uxs = np.array(uxs)
-    move_with_filter=np.array([uxs[:, 0], uxs[:, 1]]).T
-    plt.subplot('121')
-    #plt.scatter(move_with_noise[:,0],move_with_noise[:,1],s=10)
-    plt.scatter(move_no_noise[:,0],move_no_noise[:,1],s=10,c='r')
-    plt.plot(move_with_filter[:, 0], move_with_filter[:, 1])
-    calculate_filter_error('ukf','122')
+        #if i%500==0:
+            #print(i,(time.time()-t1)/500)
+            #t1=time.time()        
+    move_with_filter = np.array(uxs)
+    a=move_no_noise[:,:2]
+    b=move_with_filter
+    if b.shape[1]!=2:
+        b=b[:,:2]
+    err=np.linalg.norm(a-b,axis=1)
+    print(f'avg:{err.mean():.3f} std:{err.std():.3f} max:{err.max():.3f} min:{err.min():.3f}')    
+    return err.mean()
 if __name__=='__main__':
-    ukftest()
-    #pftest('121')
+    #plt.figure(1)
+    #ukftest()
+    pftest('121')
     #swtest('121')
     plt.show()
+    #l=[]
+    #for R in np.linspace(0.01,10):
+        #aug=0
+        #for i in range(10):
+            #refrashdata()
+            #aug+=ukf_aug_search(R=R)
+        #aug/=10
+        #print([R,aug])
+        #l.append([R,aug])
+        
+    #print(l)
