@@ -9,6 +9,7 @@ Requirement:
 ```
 filterpy 
 matplotlib  
+seaborn
 scipy  
 numpy
 ```
