@@ -1,14 +1,15 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 from filterpy.monte_carlo  import systematic_resample
 from filterpy.kalman import UnscentedKalmanFilter
 from filterpy.common import Q_discrete_white_noise
 from filterpy.kalman import MerweScaledSigmaPoints
 import scipy.stats
 import time
-from numpy.random import randn
+from numpy.random import randn,uniform
 class fake_robot():
-    def __init__(self,std=0.1):
+    def __init__(self,sensor_std=0.1,control_std=0.001):
         self.a=0
         self.v=1.5
         self.angle=0
@@ -16,35 +17,36 @@ class fake_robot():
         self.y=0
         self.state=0
         self.state_holdcount=0
-        self.sampleHZ=20
-        self.noise_std=std
+        self.dt=0.05
+        self.sensor_std=sensor_std
+        self.control_std=control_std
         self.rotate_acc=0
     def sample(self):
         self.state_holdcount+=1
         if self.state_holdcount>80:
             self.state_holdcount=0
-            if np.random.rand()<0.7:
+            if uniform()<0.7:
                 tempnum1=np.random.randint(0,3)
                 while self.state==tempnum1:
                     tempnum1=np.random.randint(0,3)
                 self.state=tempnum1
             if self.state==0:
-                self.v=1+np.random.rand()
+                self.v=1+uniform()
                 self.rotate_acc=0
-                #self.angle+=np.random.rand()*270-135
             elif self.state==1:
-                self.v=0.6+np.random.uniform(0,1)
-                if np.random.rand()<0.5:
-                    self.rotate_acc=np.deg2rad(np.random.uniform(4,12))
+                self.v=0.6+uniform(0,1)
+                if uniform()<0.5:
+                    self.rotate_acc=np.deg2rad(uniform(4,12))
                 else:
-                    self.rotate_acc=np.deg2rad(-np.random.uniform(4,12))
-                #self.angle+=np.random.rand()*270-135
-        self.angle+=self.rotate_acc*(1/self.sampleHZ)+np.random.randn()*.01
-        self.x+=self.v*(1/self.sampleHZ)*np.cos(self.angle)+np.random.randn()*0.001
-        self.y+=self.v*(1/self.sampleHZ)*np.sin(self.angle)+np.random.randn()*0.001       
+                    self.rotate_acc=np.deg2rad(-uniform(4,12))
+                
+        self.angle+=self.rotate_acc*self.dt+randn()*.01*self.control_std
+        dist=self.v*self.dt+abs(randn())*self.control_std
+        self.x+=np.cos(self.angle)*dist
+        self.y+=np.sin(self.angle)*dist
         return self.v,self.rotate_acc,\
                self.x,self.y,self.angle,\
-               self.x+randn()*self.noise_std,self.y+randn()*self.noise_std,self.angle+randn()*0.01
+               self.x+randn()*self.sensor_std,self.y+randn()*self.sensor_std,self.angle+randn()*0.01*self.sensor_std
 class sliding_window_filter():
     def __init__(self,window_size):
         self.datalist=[]
@@ -57,7 +59,7 @@ class sliding_window_filter():
         return np.mean(self.datalist,axis=0)
 class pf():
     def __init__(self,init_point,std):
-        self.N=1000
+        self.N=500
         self.particles=self.normal_particles(init_point,std,self.N)
         #self.particles=self.uniform_particles([-2,2],[-2,2],[1,2],self.N)
         self.weights = np.zeros(self.N)
@@ -113,8 +115,8 @@ class pf():
 class ekf():
     def __init__(self):
         pass
-robot=fake_robot(std=.3)
-origin_data=np.array([robot.sample() for _ in range(5000)])
+robot=fake_robot(sensor_std=.1,control_std=.04)
+origin_data=np.array([robot.sample() for _ in range(3000)])
 move_v_angle=origin_data[:,:2]
 move_no_noise=origin_data[:,2:5]
 move_with_noise=origin_data[:,5:]
@@ -134,7 +136,8 @@ def calculate_filter_error(name,subname):
         b=b[:,:2]
     err=np.linalg.norm(a-b,axis=1)
     plt.subplot(subname)
-    plt.hist(err,bins=500)
+    plt.xlim(0,0.6)
+    sns.distplot(err,bins=100)
     print(f'{name} err:avg:{err.mean():.3f} std:{err.std():.3f} max:{err.max():.3f} min:{err.min():.3f}')
 def swtest(subplotname='151'):
     global move_with_filter
@@ -164,13 +167,13 @@ def pftest(a='121'):
     global move_with_filter
     plt.subplot(a)
     init_point=move_with_noise[0]
-    f=pf(init_point,[.5,.5,10])
+    f=pf(init_point,[.5,.5,1000])
     move_with_filter=[]
     move_with_filter.append(np.array(init_point[:2]))
     t1=time.time()
     for i in range(1,len(move_with_noise)):
         f.predict(move_v_angle[i],[0.015,0.03], dt=0.05)
-        f.update(move_with_noise[i][:2],0.1)
+        f.update(move_with_noise[i][:2],0.08)
         f.resample()
         mean0,std0=f.estimate()
         #plt.scatter(f.particles[:,0],f.particles[:,1],s=2,alpha=0.2,label=f'particles:{i}')
@@ -200,8 +203,8 @@ def pftest(a='121'):
     #ax.yaxis.set_ticks_position('left')
     #ax.spines['left'].set_position(('data',0))
     #plt.show()    
-    calculate_filter_error('pf','122')
-def ukftest():
+    calculate_filter_error('pf',a+1)
+def ukftest(a=221):
     global move_with_filter
     def f_cv(x, dt,v_angle):
         v=v_angle[0]
@@ -218,9 +221,8 @@ def ukftest():
     ukf = UnscentedKalmanFilter(dim_x=3, dim_z=2, fx=f_cv,
               hx=h_cv, dt=0.05, points=sigmas)
     ukf.x = np.array([0., 0.,0.])
-    ukf.R *= 0.2
-    ukf.Q*=1e-4
-    #ukf.Q = Q_discrete_white_noise(3, dt=0.05, var=0.0001)
+    ukf.R *= 0.05
+    ukf.Q = Q_discrete_white_noise(3, dt=0.05, var=0.1)
     uxs = []  
     t1=time.time()
     for i in range(len(move_with_noise)):
@@ -232,14 +234,14 @@ def ukftest():
             t1=time.time()        
     uxs = np.array(uxs)
     move_with_filter=np.array([uxs[:, 0], uxs[:, 1]]).T
-    plt.subplot('121')
+    plt.subplot(a)
     plt.scatter(move_no_noise[:,0],move_no_noise[:,1],label='origin',s=9,c='r')
     plt.scatter(move_with_noise[:,0],move_with_noise[:,1],label='with_noise',s=10,alpha=0.1)
     plt.plot(move_with_filter[:,0],move_with_filter[:,1],label='with_filter')
     plt.grid(True)
     ax=plt.gca()
     ax.set_aspect(1)    
-    calculate_filter_error('ukf','122')
+    calculate_filter_error('ukf',a+1)
 def ukf_aug_search(R=5,Q_var=0.1,alpha=0.05):
     global move_with_filter
     def f_cv(x, dt,v_angle):
@@ -277,8 +279,8 @@ def ukf_aug_search(R=5,Q_var=0.1,alpha=0.05):
     return err.mean()
 if __name__=='__main__':
     #plt.figure(1)
-    #ukftest()
-    pftest('121')
+    ukftest(121)
+    #pftest(223)
     #swtest('121')
     plt.show()
     #l=[]
