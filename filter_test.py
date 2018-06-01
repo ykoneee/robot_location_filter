@@ -56,7 +56,7 @@ def pftest(a='121'):
     calculate_filter_error('pf',a+1,move_no_noise,move_with_filter)
 def ukftest(a=221):
     global move_with_filter
-    ukf=get_ukf()
+    ukf=get_ukf(R_std=0.05,Q_std=0.1)
     uxs = []  
     t1=time.time()
     for i in range(len(move_with_noise)):

@@ -2,7 +2,7 @@ from filterpy.kalman import UnscentedKalmanFilter
 from filterpy.common import Q_discrete_white_noise
 from filterpy.kalman import MerweScaledSigmaPoints
 import numpy as np
-def get_ukf():
+def get_ukf(R_std,Q_std):
     def f_cv(x, dt,v_angle):
         v=v_angle[0]
         rad=v_angle[1]
@@ -18,7 +18,7 @@ def get_ukf():
     ukf = UnscentedKalmanFilter(dim_x=3, dim_z=2, fx=f_cv,
                                 hx=h_cv, dt=0.05, points=sigmas)
     ukf.x = np.array([0., 0.,0.])
-    ukf.R *= 0.05
-    ukf.Q = Q_discrete_white_noise(3, dt=0.05, var=0.1)
+    ukf.R *= R_std
+    ukf.Q = Q_discrete_white_noise(3, dt=0.05, var=Q_std)
     
     return ukf
