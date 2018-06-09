@@ -27,7 +27,6 @@ class pf():
         particles[:, 2] %= 2 * np.pi
         return particles    
     def predict(self, u, std, dt=1.,angle_increase_mode=True):
-        
         if angle_increase_mode:
             self.particles[:, 2] += u[1]*dt + (randn(self.N) * std[1])
         else:

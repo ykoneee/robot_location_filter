@@ -3,7 +3,7 @@ import numpy as np
 import  matplotlib.pyplot as plt
 import seaborn as sns
 class fake_robot():
-    def __init__(self,sensor_std=0.1,control_std=0.001):
+    def __init__(self,sensor_std=0.1,control_std=0.001,dt=0.05):
         self.a=0
         self.v=1.5
         self.angle=0
@@ -11,7 +11,7 @@ class fake_robot():
         self.y=0
         self.state=0
         self.state_holdcount=60
-        self.dt=0.05
+        self.dt=dt
         self.sensor_std=sensor_std
         self.control_std=control_std
         self.rotate_acc=0

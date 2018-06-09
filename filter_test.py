@@ -7,7 +7,8 @@ from robot_utils import fake_robot,calculate_filter_error
 from particle_filter import pf
 from unscented_kalman_filter import get_ukf
 
-robot=fake_robot(sensor_std=.14,control_std=.004)
+dt=0.02
+robot=fake_robot(sensor_std=.11,control_std=.0005,dt=dt)
 origin_data=np.array([robot.sample() for _ in range(5000)])
 move_v_angle=origin_data[:,:2]
 move_no_noise=origin_data[:,2:5]
@@ -31,32 +32,28 @@ def pftest(a='121'):
     move_with_filter.append(np.array(init_point[:2]))
     t1=time.time()
     for i in range(1,len(move_with_noise)):
-        f.predict(move_v_angle[i],[0.015,0.01], dt=0.05)
+        f.predict(move_v_angle[i],[0.005,0.006], dt=dt)
         f.update(move_with_noise[i][:2],0.09)
         f.resample()
         mean0,std0=f.estimate()
-        #plt.scatter(f.particles[:,0],f.particles[:,1],s=2,alpha=0.2,label=f'particles:{i}')
         move_with_filter.append(mean0)
-        #plt.scatter(old[:,0],old[:,1],s=3,label='old')
-        #plt.scatter(new[:,0],new[:,1],s=3,label='new')
-        #plt.scatter(mean0[0],mean0[1],s=3,c='k')
         if i%500==0:
             print(i,(time.time()-t1)/500)        
             t1=time.time()
     move_with_filter=np.array(move_with_filter)
-    #plt.scatter(move_with_filter[:,0],move_with_filter[:,1],label='with_filter',s=15,c='g')
+
     
     plt.scatter(move_no_noise[:,0],move_no_noise[:,1],label='origin',s=9,c='r')
     plt.scatter(move_with_noise[:,0],move_with_noise[:,1],label='with_noise',s=10,alpha=0.3)
     plt.plot(move_with_filter[:,0],move_with_filter[:,1],label='with_filter')
-    #plt.legend()
+
     plt.grid(True)
     ax=plt.gca()
     ax.set_aspect(1)
     calculate_filter_error('pf',a+1,move_no_noise,move_with_filter)
 def ukftest(a=221):
     global move_with_filter
-    ukf=get_ukf(R_std=0.05,Q_std=0.1)
+    ukf=get_ukf(R_std=0.02,Q_std=0.002,dt=dt)
     uxs = []  
     t1=time.time()
     for i in range(len(move_with_noise)):
@@ -112,8 +109,9 @@ def ukf_aug_search(R=5,Q_var=0.1,alpha=0.05):
     print(f'avg:{err.mean():.3f} std:{err.std():.3f} max:{err.max():.3f} min:{err.min():.3f}')    
     return err.mean()
 if __name__=='__main__':
-    ukftest(221)
-    pftest(223)
+    ukftest(321)
+    pftest(323)
+    calculate_filter_error('ori',326,move_no_noise,move_with_noise)
     plt.show()
     
     #========================================
