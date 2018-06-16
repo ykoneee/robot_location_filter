@@ -19,6 +19,7 @@ def get_ukf(R_std,Q_std,dt):
                                 hx=h_, dt=dt, points=sigmas)
     ukf.x = np.array([0., 0.,0.])
     ukf.R *= R_std
-    ukf.Q = Q_discrete_white_noise(3, dt=dt, var=Q_std)
+    ukf.Q*=Q_std
+    #ukf.Q = Q_discrete_white_noise(3, dt=dt, var=Q_std)
     
     return ukf
